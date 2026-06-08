@@ -1,16 +1,7 @@
 // TENHO HP - MORE
 
 const NOTE_URL = 'https://note.com/tenho_ai';
-const NOTE_RSS = 'https://note.com/tenho_ai/rss';
 const CARD_LIMIT = 3;
-const RSS_TIMEOUT = 3200;
-const OG_TIMEOUT = 2200;
-
-const PROXIES = [
-  (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
-  (url) => 'https://corsproxy.io/?url=' + encodeURIComponent(url),
-  (url) => 'https://thingproxy.freeboard.io/fetch/' + url,
-];
 
 const LOADING_ITEMS = Array.from({ length: CARD_LIMIT }, (_, index) => ({
   date: '',
@@ -18,177 +9,60 @@ const LOADING_ITEMS = Array.from({ length: CARD_LIMIT }, (_, index) => ({
   title: '読み込み中',
   link: NOTE_URL,
   image: null,
-  loading: true,
   art: ['orbit', 'circuit', 'grid'][index],
+  loading: true,
 }));
 
-function fmtDate(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function getNodeText(item, selector) {
-  return item.querySelector(selector)?.textContent?.trim() || '';
-}
-
-function getItemDateValue(item) {
-  return getNodeText(item, 'updated')
-    || getNodeText(item, 'dc\\:date')
-    || getNodeText(item, 'pubDate')
-    || getNodeText(item, 'published');
-}
-
-function withCacheBust(url) {
-  const glue = url.includes('?') ? '&' : '?';
-  return `${url}${glue}_=${Date.now()}`;
-}
-
-function normalizeImageUrl(url, width = 900) {
-  if (!url) return null;
-
-  try {
-    const parsed = new URL(url.trim());
-    parsed.searchParams.set('width', String(width));
-    return parsed.toString();
-  } catch (_) {
-    const clean = url.trim();
-    return clean + (clean.includes('?') ? '&' : '?') + `width=${width}`;
-  }
-}
-
-function parseSrcset(srcset) {
-  return srcset
-    ?.split(',')
-    .map((part) => part.trim().split(/\s+/)[0])
-    .find(Boolean) || null;
-}
-
-function imageFromElement(image) {
-  if (!image) return null;
-
-  return image.getAttribute('src')
-    || image.getAttribute('data-src')
-    || image.getAttribute('data-original')
-    || image.getAttribute('data-lazy-src')
-    || parseSrcset(image.getAttribute('data-srcset'))
-    || parseSrcset(image.getAttribute('srcset'));
-}
-
-function imageFromHtml(html) {
-  if (!html) return null;
-
-  try {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const ogImage = doc.querySelector('meta[property="og:image"]')
-      || doc.querySelector('meta[name="og:image"]')
-      || doc.querySelector('meta[name="twitter:image"]');
-    return ogImage?.getAttribute('content')?.trim()
-      || imageFromElement(doc.querySelector('img'));
-  } catch (_) {
-    return null;
-  }
-}
-
-function requestSignal(timeout) {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeout);
-  return {
-    signal: controller.signal,
-    abort: () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    },
-  };
-}
-
-async function fetchProxyText(targetUrl, timeout, isUsable) {
-  let lastError = null;
-
-  for (const build of PROXIES) {
-    const controller = requestSignal(timeout);
-
-    try {
-      const res = await fetch(build(withCacheBust(targetUrl)), {
-        cache: 'no-store',
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const text = await res.text();
-      if (!isUsable(text)) throw new Error('Unusable response');
-
-      return text;
-    } catch (error) {
-      lastError = error;
-    } finally {
-      controller.abort();
-    }
-  }
-
-  throw lastError || new Error('All proxy requests failed');
-}
-
-function parseRss(xml) {
-  const doc = new DOMParser().parseFromString(xml, 'text/xml');
-
-  return Array.from(doc.querySelectorAll('item'))
-    .map((item, originalIndex) => {
-      const title = getNodeText(item, 'title') || 'TENHO note';
-      const link = getNodeText(item, 'link') || NOTE_URL;
-      const dateValue = getItemDateValue(item);
-      const timestamp = Date.parse(dateValue);
-
-      return {
-        originalIndex,
-        timestamp: Number.isNaN(timestamp) ? 0 : timestamp,
-        date: fmtDate(dateValue),
-        category: 'NOTE',
-        title,
-        link,
-        image: null,
-      };
-    })
-    .sort((a, b) => (b.timestamp - a.timestamp) || (a.originalIndex - b.originalIndex))
-    .slice(0, CARD_LIMIT)
-    .map((item, index) => ({
-      ...item,
-      art: ['orbit', 'circuit', 'grid'][index % 3],
-    }));
-}
-
 async function fetchLatestNotes() {
-  const rss = await fetchProxyText(
-    NOTE_RSS,
-    RSS_TIMEOUT,
-    (text) => text?.includes('<item')
-  );
+  const res = await fetch('./posts.json', { cache: 'no-store' });
 
-  return parseRss(rss);
-}
-
-async function fetchOgImage(link) {
-  try {
-    const html = await fetchProxyText(
-      link,
-      OG_TIMEOUT,
-      (text) => text?.includes('og:image') || text?.includes('<img')
-    );
-    return normalizeImageUrl(imageFromHtml(html));
-  } catch (_) {
-    return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load posts.json: ${res.status}`);
   }
+
+  const posts = await res.json();
+
+  if (!Array.isArray(posts)) {
+    throw new Error('posts.json must be an array.');
+  }
+
+  return posts.slice(0, CARD_LIMIT).map((post, index) => ({
+    date: post.date || '',
+    category: post.category || 'NOTE',
+    title: post.title || 'TENHO note',
+    link: post.link || NOTE_URL,
+    image: post.image || null,
+    art: post.art || ['orbit', 'circuit', 'grid'][index],
+  }));
 }
 
-function ThumbFallback({ kind }) {
+function ThumbArt({ kind, image }) {
+  if (image) {
+    return (
+      <div
+        className="more-thumb-img"
+        style={{ backgroundImage: `url("${image}")` }}
+      />
+    );
+  }
+
   if (kind === 'orbit') {
     return (
       <div className="more-thumb-art">
         <svg viewBox="-50 -50 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-          <circle cx="0" cy="0" r="34" fill="#BEDCFF" opacity="0.35" />
+          <defs>
+            <radialGradient id="g-orbit" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#BEDCFF" stopOpacity="0.5" />
+              <stop offset="100%" stopColor="#BEDCFF" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <circle cx="0" cy="0" r="34" fill="url(#g-orbit)" />
           <ellipse cx="0" cy="0" rx="38" ry="22" fill="none" stroke="#0E0E0E" strokeWidth="0.4" />
-          <ellipse cx="0" cy="0" rx="28" ry="16" fill="none" stroke="#76736B" strokeWidth="0.25" transform="rotate(28)" />
+          <ellipse cx="0" cy="0" rx="28" ry="16" fill="none" stroke="#0E0E0E" strokeWidth="0.3" transform="rotate(28)" />
+          <ellipse cx="0" cy="0" rx="44" ry="26" fill="none" stroke="#76736B" strokeWidth="0.25" strokeDasharray="1.2 2" />
           <circle cx="0" cy="0" r="4" fill="#0E0E0E" />
+          <circle cx="32" cy="-8" r="1.6" fill="#0E0E0E" />
+          <circle cx="-26" cy="12" r="1.2" fill="#6FA8DC" />
         </svg>
       </div>
     );
@@ -206,9 +80,17 @@ function ThumbFallback({ kind }) {
           <g fill="#0E0E0E">
             <circle cx="30" cy="20" r="1.8" />
             <circle cx="60" cy="40" r="1.8" />
+            <circle cx="25" cy="70" r="1.8" />
             <circle cx="75" cy="30" r="1.8" />
+            <circle cx="40" cy="80" r="1.8" />
             <circle cx="80" cy="60" r="1.8" />
           </g>
+          <g fill="#6FA8DC">
+            <circle cx="90" cy="20" r="1.6" />
+            <circle cx="90" cy="30" r="1.6" />
+            <circle cx="90" cy="80" r="1.6" />
+          </g>
+          <rect x="48" y="46" width="16" height="10" fill="none" stroke="#0E0E0E" strokeWidth="0.5" rx="0.5" />
         </svg>
       </div>
     );
@@ -217,12 +99,21 @@ function ThumbFallback({ kind }) {
   return (
     <div className="more-thumb-art">
       <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+        <defs>
+          <pattern id="pg" width="10" height="10" patternUnits="userSpaceOnUse">
+            <path d="M10 0 L0 0 L0 10" fill="none" stroke="#D8D3C8" strokeWidth="0.3" />
+          </pattern>
+        </defs>
+        <rect width="100" height="100" fill="url(#pg)" />
         <rect x="20" y="20" width="20" height="20" fill="#0E0E0E" opacity="0.85" />
         <rect x="42" y="20" width="14" height="14" fill="none" stroke="#0E0E0E" strokeWidth="0.4" />
         <rect x="42" y="36" width="14" height="14" fill="#BEDCFF" opacity="0.7" />
-        <rect x="58" y="20" width="22" height="30" fill="none" stroke="#76736B" strokeWidth="0.3" />
+        <rect x="58" y="20" width="22" height="6" fill="none" stroke="#0E0E0E" strokeWidth="0.4" />
+        <rect x="58" y="28" width="22" height="22" fill="none" stroke="#76736B" strokeWidth="0.3" />
+        <rect x="20" y="42" width="20" height="6" fill="none" stroke="#0E0E0E" strokeWidth="0.4" />
         <rect x="20" y="50" width="36" height="20" fill="none" stroke="#0E0E0E" strokeWidth="0.4" />
         <rect x="58" y="52" width="22" height="18" fill="#0E0E0E" />
+        <rect x="20" y="72" width="60" height="8" fill="none" stroke="#76736B" strokeWidth="0.3" />
       </svg>
     </div>
   );
@@ -239,16 +130,8 @@ function MoreCard({ item, index }) {
       aria-busy={item.loading ? 'true' : undefined}
     >
       <div className="more-thumb">
-        {item.image ? (
-          <div
-            className="more-thumb-img"
-            style={{ backgroundImage: `url("${item.image}")` }}
-          />
-        ) : (
-          <ThumbFallback kind={item.art} />
-        )}
+        <ThumbArt kind={item.art} image={item.image} />
       </div>
-
       <div className="more-body">
         <div className="more-meta">
           {item.date ? <span>{item.date}</span> : null}
@@ -264,34 +147,27 @@ function MoreCard({ item, index }) {
 
 function More() {
   const [items, setItems] = React.useState(LOADING_ITEMS);
+  const [failed, setFailed] = React.useState(false);
 
   React.useEffect(() => {
-    let active = true;
+    let mounted = true;
 
     fetchLatestNotes()
-      .then((notes) => {
-        if (!active || !notes.length) return;
-        const latestNotes = notes.slice(0, CARD_LIMIT);
-        setItems(latestNotes);
-
-        (async () => {
-          const notesWithImages = [...latestNotes];
-
-          for (const [index, note] of latestNotes.entries()) {
-            const image = await fetchOgImage(note.link);
-            if (!active) return;
-
-            notesWithImages[index] = image ? { ...note, image } : note;
-            setItems([...notesWithImages]);
-          }
-        })();
+      .then((posts) => {
+        if (mounted && posts.length) {
+          setItems(posts);
+          setFailed(false);
+        }
       })
       .catch(() => {
-        if (active) setItems([]);
+        if (mounted) {
+          setItems([]);
+          setFailed(true);
+        }
       });
 
     return () => {
-      active = false;
+      mounted = false;
     };
   }, []);
 
@@ -307,7 +183,6 @@ function More() {
               Case
             </div>
           </div>
-
           <div className="head-jp is-serif reveal" data-delay="2">
             実践事例や最新情報を、<br />
             <span className="em">発信</span>しています。
@@ -317,13 +192,13 @@ function More() {
         {items.length ? (
           <div className="more-grid">
             {items.map((item, index) => (
-              <MoreCard key={item.link || `${item.title}-${index}`} item={item} index={index} />
+              <MoreCard key={`${item.link || item.title}-${index}`} item={item} index={index} />
             ))}
           </div>
         ) : (
           <div className="more-cta reveal in" data-delay="1">
             <a href={NOTE_URL} target="_blank" rel="noopener noreferrer">
-              noteで最新情報を見る <span>-&gt;</span>
+              {failed ? 'noteで最新情報を見る' : '読み込み中'} <span>-&gt;</span>
             </a>
           </div>
         )}

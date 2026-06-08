@@ -1,0 +1,38 @@
+name: Update note posts
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-posts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Update posts.json
+        run: node scripts/update-posts.js
+
+      - name: Commit posts.json
+        run: |
+          if git diff --quiet -- posts.json; then
+            echo "posts.json has no changes."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add posts.json
+          git commit -m "Update note posts"
+          git push
