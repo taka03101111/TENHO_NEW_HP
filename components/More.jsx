@@ -28,6 +28,17 @@ function fmtDate(value) {
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function getNodeText(item, selector) {
+  return item.querySelector(selector)?.textContent?.trim() || '';
+}
+
+function getItemDateValue(item) {
+  return getNodeText(item, 'updated')
+    || getNodeText(item, 'dc\\:date')
+    || getNodeText(item, 'pubDate')
+    || getNodeText(item, 'published');
+}
+
 function withCacheBust(url) {
   const glue = url.includes('?') ? '&' : '?';
   return `${url}${glue}_=${Date.now()}`;
@@ -132,22 +143,23 @@ function parseRss(xml) {
   const doc = new DOMParser().parseFromString(xml, 'text/xml');
 
   return Array.from(doc.querySelectorAll('item'))
-    .map((item) => {
-      const title = item.querySelector('title')?.textContent?.trim() || 'TENHO note';
-      const link = item.querySelector('link')?.textContent?.trim() || NOTE_URL;
-      const pubDate = item.querySelector('pubDate')?.textContent?.trim();
-      const timestamp = Date.parse(pubDate || '');
+    .map((item, originalIndex) => {
+      const title = getNodeText(item, 'title') || 'TENHO note';
+      const link = getNodeText(item, 'link') || NOTE_URL;
+      const dateValue = getItemDateValue(item);
+      const timestamp = Date.parse(dateValue);
 
       return {
+        originalIndex,
         timestamp: Number.isNaN(timestamp) ? 0 : timestamp,
-        date: fmtDate(pubDate),
+        date: fmtDate(dateValue),
         category: 'NOTE',
         title,
         link,
         image: extractRssImage(item),
       };
     })
-    .sort((a, b) => b.timestamp - a.timestamp)
+    .sort((a, b) => (b.timestamp - a.timestamp) || (a.originalIndex - b.originalIndex))
     .slice(0, CARD_LIMIT)
     .map((item, index) => ({
       ...item,
