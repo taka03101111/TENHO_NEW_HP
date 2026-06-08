@@ -3,8 +3,8 @@
 const NOTE_URL = 'https://note.com/tenho_ai';
 const NOTE_RSS = 'https://note.com/tenho_ai/rss';
 const CARD_LIMIT = 3;
-const RSS_TIMEOUT = 32000000;
-const OG_TIMEOUT = 220000000;
+const RSS_TIMEOUT = 3200;
+const OG_TIMEOUT = 2200;
 
 const PROXIES = [
   (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
@@ -90,21 +90,6 @@ function imageFromHtml(html) {
   }
 }
 
-function extractRssImage(item) {
-  const encoded = item.getElementsByTagName('content:encoded')[0]?.textContent;
-  const description = item.querySelector('description')?.textContent;
-  const htmlImage = imageFromHtml(encoded || description);
-  if (htmlImage) return normalizeImageUrl(htmlImage);
-
-  const media = item.getElementsByTagName('media:thumbnail')[0]
-    || item.getElementsByTagName('media:content')[0];
-  const mediaUrl = media?.getAttribute('url') || media?.textContent?.trim();
-  if (mediaUrl) return normalizeImageUrl(mediaUrl);
-
-  const enclosureUrl = item.getElementsByTagName('enclosure')[0]?.getAttribute('url');
-  return normalizeImageUrl(enclosureUrl);
-}
-
 function requestSignal(timeout) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeout);
@@ -118,25 +103,30 @@ function requestSignal(timeout) {
 }
 
 async function fetchProxyText(targetUrl, timeout, isUsable) {
-  const requests = PROXIES.map((build) => {
+  let lastError = null;
+
+  for (const build of PROXIES) {
     const controller = requestSignal(timeout);
 
-    return fetch(build(withCacheBust(targetUrl)), {
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.text();
-      })
-      .then((text) => {
-        if (!isUsable(text)) throw new Error('Unusable response');
-        return text;
-      })
-      .finally(controller.abort);
-  });
+    try {
+      const res = await fetch(build(withCacheBust(targetUrl)), {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-  return Promise.any(requests);
+      const text = await res.text();
+      if (!isUsable(text)) throw new Error('Unusable response');
+
+      return text;
+    } catch (error) {
+      lastError = error;
+    } finally {
+      controller.abort();
+    }
+  }
+
+  throw lastError || new Error('All proxy requests failed');
 }
 
 function parseRss(xml) {
@@ -156,7 +146,7 @@ function parseRss(xml) {
         category: 'NOTE',
         title,
         link,
-        image: extractRssImage(item),
+        image: null,
       };
     })
     .sort((a, b) => (b.timestamp - a.timestamp) || (a.originalIndex - b.originalIndex))
@@ -284,15 +274,17 @@ function More() {
         const latestNotes = notes.slice(0, CARD_LIMIT);
         setItems(latestNotes);
 
-        const missingImageJobs = latestNotes.map(async (note) => {
-          if (note.image) return note;
-          const image = await fetchOgImage(note.link);
-          return image ? { ...note, image } : note;
-        });
+        (async () => {
+          const notesWithImages = [...latestNotes];
 
-        Promise.all(missingImageJobs).then((notesWithImages) => {
-          if (active) setItems(notesWithImages);
-        });
+          for (const [index, note] of latestNotes.entries()) {
+            const image = await fetchOgImage(note.link);
+            if (!active) return;
+
+            notesWithImages[index] = image ? { ...note, image } : note;
+            setItems([...notesWithImages]);
+          }
+        })();
       })
       .catch(() => {
         if (active) setItems([]);
