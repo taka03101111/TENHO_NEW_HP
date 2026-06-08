@@ -3,8 +3,8 @@
 const NOTE_URL = 'https://note.com/tenho_ai';
 const NOTE_RSS = 'https://note.com/tenho_ai/rss';
 const CARD_LIMIT = 3;
-const RSS_TIMEOUT = 10000000;
-const OG_TIMEOUT = 1000000;
+const RSS_TIMEOUT = 32000000;
+const OG_TIMEOUT = 220000000;
 
 const PROXIES = [
   (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
@@ -132,21 +132,27 @@ function parseRss(xml) {
   const doc = new DOMParser().parseFromString(xml, 'text/xml');
 
   return Array.from(doc.querySelectorAll('item'))
-    .slice(0, CARD_LIMIT)
-    .map((item, index) => {
+    .map((item) => {
       const title = item.querySelector('title')?.textContent?.trim() || 'TENHO note';
       const link = item.querySelector('link')?.textContent?.trim() || NOTE_URL;
       const pubDate = item.querySelector('pubDate')?.textContent?.trim();
+      const timestamp = Date.parse(pubDate || '');
 
       return {
+        timestamp: Number.isNaN(timestamp) ? 0 : timestamp,
         date: fmtDate(pubDate),
         category: 'NOTE',
         title,
         link,
         image: extractRssImage(item),
-        art: ['orbit', 'circuit', 'grid'][index % 3],
       };
-    });
+    })
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, CARD_LIMIT)
+    .map((item, index) => ({
+      ...item,
+      art: ['orbit', 'circuit', 'grid'][index % 3],
+    }));
 }
 
 async function fetchLatestNotes() {
@@ -263,9 +269,10 @@ function More() {
     fetchLatestNotes()
       .then((notes) => {
         if (!active || !notes.length) return;
-        setItems(notes);
+        const latestNotes = notes.slice(0, CARD_LIMIT);
+        setItems(latestNotes);
 
-        const missingImageJobs = notes.map(async (note, index) => {
+        const missingImageJobs = latestNotes.map(async (note) => {
           if (note.image) return note;
           const image = await fetchOgImage(note.link);
           return image ? { ...note, image } : note;
