@@ -3,8 +3,8 @@
 const NOTE_URL = 'https://note.com/tenho_ai';
 const NOTE_RSS = 'https://note.com/tenho_ai/rss';
 const CARD_LIMIT = 3;
-const RSS_TIMEOUT = 3200;
-const OG_TIMEOUT = 2200;
+const RSS_TIMEOUT = 10000000;
+const OG_TIMEOUT = 1000000;
 
 const PROXIES = [
   (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
